@@ -1,0 +1,32 @@
+#!/bin/bash
+watch_drama () {
+  embed=https:`curl --silent 'https://asianembed.io/videos/my-roommate-is-a-gumiho-2021-episode-2' \
+    -H 'referer: https://asianembed.io/' \
+    -H 'user-agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36' \
+    --compressed | pup 'iframe attr{src}'`
+  # echo "$embed"
+  page=`curl --silent "$embed" \
+    -H 'user-agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36' \
+    --compressed`
+  title=`echo "$page" | pup 'meta[name="description"] attr{content}'`
+  data_value=`echo "$page" | pup 'script[data-name="crypto"] attr{data-value}'`
+  id=`echo "$page" | pup 'input#id attr{value}'`
+  # echo "$data_value"
+  # echo "$id"
+  secret_key=`echo -n 93422192433952489752342908585752 | od -A n -t x1 | tr -d ' |\n'`
+  iv=`echo -n 9262859232435825 | od -A n -t x1 | tr -d ' |\n'`
+  # token=`openssl enc -a -d -aes-256-cbc -K "$secret_key" -iv "$iv" <<< "$data_value"` 
+  # echo "$token"
+  encrypted_id=`openssl enc -e -aes-256-cbc -K "$secret_key" -iv "$iv" -a <<< "$id"`
+  ajax_url="https://dembed2.com/encrypt-ajax.php?id=$encrypted_id"
+  # echo "$ajax_url"
+  data=`curl --silent "$ajax_url" \
+    -H 'user-agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36' \
+    -H "X-Requested-With:XMLHttpRequest" \
+    --compressed | jq '.data' | tr -d '"'`
+  # echo "$data"
+  file=`openssl enc -a -d -aes-256-cbc -K "$secret_key" -iv "$iv" <<< "$data" | jq '.source[0].file' | tr -d '"'`
+  # echo "$file"
+  mpv --force-media-title="$title" --referrer="https://asianembed.io/" "$file" > /dev/null 2>& 1 &
+}
+watch_drama
