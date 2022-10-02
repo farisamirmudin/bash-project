@@ -1,0 +1,73 @@
+#!/bin/bash
+agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36'
+ask_for_anime () {
+  read -p 'Enter Anime: ' anime
+  anime=`echo "$anime" | tr ' ' '-'`
+  page=`curl --silent "https://gogoanime.tel/search.html?keyword=$anime" \
+    -H "user-agent: $agent"`
+  IFS=$'\n'
+  links=(`echo "$page" | pup 'div[class="img"] a[title] attr{href}'`)
+  titles=(`echo "$page" | pup 'div[class="img"] a[title] attr{title}'`)
+  for i in ${!titles[@]}
+  do
+    printf '[%s] %s\n' "$((i+1))" "${titles[i]}"
+  done
+  flag=1
+  while [ "$flag" -eq 1 ]; do
+    read -p "Choose Anime: " idx
+    if [ "$idx" -gt 0 ] && [ "$idx" -le "${#titles[@]}" ]; then
+      flag=0
+    else
+      echo 'Value out of range!'
+    fi
+  done
+  title="${titles[idx-1]}"
+  link="https://gogoanime.tel${links[idx-1]}"
+  choose_ep "$link"
+}
+choose_ep () {
+  page=`curl --silent "$1" -H "user-agent: $agent"`
+  id=`echo "$page" | pup 'input#movie_id attr{value}'`
+  alias=`echo "$page" | pup 'input#alias_anime attr{value}'`
+  ep_end=`echo "$page" | pup 'a[ep_end] json{}' | jq '.[-1].ep_end' | tr -d '"'`
+  flag=1
+  while [ "$flag" -eq 1 ]; do
+    read -p "Episode [1 - $ep_end]: " ep
+    if [ "$ep" -gt 0 ] && [ "$ep" -le "$ep_end" ]; then
+      flag=0
+    else
+      echo 'Value out of range!'
+    fi
+  done
+  keywords=`curl --silent \
+    "https://ajax.gogo-load.com/ajax/load-list-episode?ep_start=0&ep_end=$ep_end&id=$id&default_ep=0&alias=$alias" \
+    -H 'referer: https://gogoanime.tel/' \
+    -H "user-agent: $agent" | head -n 1 | pup 'a attr{href}' | tr -d ' ' | sed "s/[0-9]*$/$ep/"`
+  link="https://gogoanime.tel$keywords"
+  watch_anime "$link"
+}
+
+watch_anime () {
+  page=`curl --silent "$1" \
+    -H "user-agent: $agent" \
+    --compressed`
+  embed=https:`echo "$page" | pup 'iframe attr{src}'`
+  title=`echo "$page" | pup 'div.title_name h2 text{}'`
+  page=`curl --silent "$embed" \
+    -H "user-agent: $agent" \
+    --compressed`
+  data_value=`echo "$page" | pup 'script[data-name="episode"] attr{data-value}'`
+  id=`echo "$page" | pup 'input#id attr{value}'`
+  secret_key=`echo -n 37911490979715163134003223491201 | od -A n -t x1 | tr -d ' |\n'`
+  iv=`echo -n 3134003223491201 | od -A n -t x1 | tr -d ' |\n'`
+  second_key=`echo -n 54674138327930866480207815084989| od -A n -t x1 | tr -d ' |\n'`
+  token=`openssl enc -a -d -aes-256-cbc -K "$secret_key" -iv "$iv" <<< "$data_value" | sed -nE 's/.*&(token.*)/\1/p'`
+  encrypted_id=`openssl enc -e -aes-256-cbc -K "$secret_key" -iv "$iv" -a <<< "$id"`
+  data=`curl --silent "https://gogohd.net/encrypt-ajax.php?id=$encrypted_id&alias=$id&$token" \
+    -H "user-agent: $agent" \
+    -H "X-Requested-With:XMLHttpRequest" \
+    --compressed | jq '.data' | tr -d '"'`
+  file=`openssl enc -a -d -aes-256-cbc -K "$second_key" -iv "$iv" <<< "$data" | jq '.source[0].file' | tr -d '"'`
+  mpv --force-media-title="$title" --referrer="https://gogoanime.tel/" "$file" > /dev/null 2>& 1 &
+}
+ask_for_anime
